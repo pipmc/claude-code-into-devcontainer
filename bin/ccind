@@ -45,7 +45,7 @@ WORKSPACE="$(cd "$WORKSPACE" && pwd)"
 
 # Config mount feature - defaults to published GHCR version
 # Override with CCIND_CONFIG_MOUNT_FEATURE for development/testing
-CONFIG_MOUNT_FEATURE="${CCIND_CONFIG_MOUNT_FEATURE:-ghcr.io/pipmc/claude-code-into-devcontainer/claude-config-mount:0.1.4}"
+CONFIG_MOUNT_FEATURE="${CCIND_CONFIG_MOUNT_FEATURE:-ghcr.io/pipmc/claude-code-into-devcontainer/claude-config-mount:0.1.5}"
 
 # Colors for output
 RED='\033[0;31m'

@@ -12,17 +12,7 @@ Run Claude Code CLI inside your project's devcontainer with your host configurat
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/pipmc/claude-code-into-devcontainer.git ~/.ccind
-
-# Add to PATH (add to your shell profile for persistence)
-export PATH="$HOME/.ccind/bin:$PATH"
-```
-
-Or run the install script:
-
-```bash
-./install.sh
+curl -fLsS https://raw.githubusercontent.com/pipmc/claude-code-into-devcontainer/main/install.sh | bash
 ```
 
 ## Prerequisites
