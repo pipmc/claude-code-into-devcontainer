@@ -1,0 +1,21 @@
+{
+  "id": "claude-config-mount",
+  "version": "0.1.0",
+  "name": "Claude Config Mount",
+  "description": "Mounts host ~/.claude config directory and ~/.claude.json settings file into the container for Claude Code",
+  "mounts": [
+    {
+      "source": "${localEnv:HOME}/.claude",
+      "target": "/var/claude-config",
+      "type": "bind"
+    },
+    {
+      "source": "${localEnv:HOME}/.claude.json",
+      "target": "/var/claude-settings.json",
+      "type": "bind"
+    }
+  ],
+  "installsAfter": [
+    "ghcr.io/anthropics/devcontainer-features/claude-code"
+  ]
+}

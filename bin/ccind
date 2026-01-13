@@ -1,0 +1,96 @@
+#!/bin/bash
+set -euo pipefail
+
+# ccind: Launch Claude Code inside the current repository's devcontainer
+
+# Workspace is the current directory or first argument
+WORKSPACE="${1:-.}"
+WORKSPACE="$(cd "$WORKSPACE" && pwd)"
+
+# Config mount feature - defaults to published GHCR version
+# Override with CCIND_CONFIG_MOUNT_FEATURE for development/testing
+CONFIG_MOUNT_FEATURE="${CCIND_CONFIG_MOUNT_FEATURE:-ghcr.io/pipmc/devcontainer-features/claude-config-mount:1}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo_info() {
+    echo -e "${GREEN}[ccind]${NC} $1"
+}
+
+echo_warn() {
+    echo -e "${YELLOW}[ccind]${NC} $1"
+}
+
+echo_error() {
+    echo -e "${RED}[ccind]${NC} $1"
+}
+
+prompt_rebuild() {
+    echo_warn "Claude Code CLI not found in container."
+    echo_warn "The container may have been built before the claude-code feature was added."
+    echo ""
+    read -p "Rebuild the container with Claude Code? [y/N] " -n 1 -r
+    echo ""
+    [[ $REPLY =~ ^[Yy]$ ]]
+}
+
+# Check for devcontainer CLI
+if ! command -v devcontainer &> /dev/null; then
+    echo_error "devcontainer CLI not found"
+    echo "Install it with: npm install -g @devcontainers/cli"
+    exit 1
+fi
+
+# Check for .devcontainer directory
+if [ ! -d "$WORKSPACE/.devcontainer" ]; then
+    echo_error "No .devcontainer directory found in $WORKSPACE"
+    echo "This tool requires an existing devcontainer configuration."
+    exit 1
+fi
+
+# Check for ~/.claude directory on host
+if [ ! -d "$HOME/.claude" ]; then
+    echo_warn "$HOME/.claude directory not found on host"
+    echo_warn "Claude Code may prompt for authentication inside the container"
+fi
+
+echo_info "Workspace: $WORKSPACE"
+
+# Build additional features JSON
+ADDITIONAL_FEATURES='{"ghcr.io/anthropics/devcontainer-features/claude-code:1": {}, "'"$CONFIG_MOUNT_FEATURE"'": {}}'
+
+# Bring up the devcontainer with additional features
+echo_info "Starting devcontainer..."
+devcontainer up \
+    --workspace-folder "$WORKSPACE" \
+    --additional-features "$ADDITIONAL_FEATURES"
+
+# Check if claude is available in the container
+if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude' &> /dev/null; then
+    if prompt_rebuild; then
+        echo_info "Rebuilding container..."
+        devcontainer up \
+            --workspace-folder "$WORKSPACE" \
+            --remove-existing-container \
+            --additional-features "$ADDITIONAL_FEATURES"
+    else
+        echo_error "Cannot proceed without Claude Code CLI."
+        exit 1
+    fi
+fi
+
+# Verify claude is available before launching
+if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude' &> /dev/null; then
+    echo_error "Claude Code CLI still not found after rebuild. Please check for errors above."
+    exit 1
+fi
+
+# Launch Claude Code interactively
+echo_info "Launching Claude Code..."
+exec devcontainer exec \
+    --workspace-folder "$WORKSPACE" \
+    claude
