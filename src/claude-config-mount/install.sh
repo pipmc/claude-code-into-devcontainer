@@ -1,51 +1,46 @@
 #!/bin/bash
 set -e
 
-# Get the remote user (set by devcontainer)
-REMOTE_USER="${_REMOTE_USER:-root}"
+# Install a script that will create symlinks at container start time
+# This is needed because the home directory may have a volume mounted over it,
+# which would hide symlinks created during image build.
 
-# Get the user's home directory via tilde expansion
-USER_HOME=$(eval echo ~"$REMOTE_USER")
+cat > /usr/local/bin/setup-claude-config-symlinks << 'SCRIPT'
+#!/bin/bash
+set -e
 
-echo "Setting up Claude config mount for user: $REMOTE_USER (home: $USER_HOME)"
+# Get the current user's home directory
+USER_HOME="$HOME"
 
-# Check if the mount point exists
-if [ ! -d "/var/claude-config" ]; then
-    echo "Warning: /var/claude-config does not exist. The mount may not be available yet."
-    echo "The symlink will be created anyway and should work once the container starts."
-fi
+echo "Setting up Claude config symlinks in $USER_HOME"
 
-# Create the symlink if it doesn't already exist
-if [ -L "$USER_HOME/.claude" ]; then
-    echo "Symlink $USER_HOME/.claude already exists, skipping"
-elif [ -d "$USER_HOME/.claude" ]; then
-    echo "Error: $USER_HOME/.claude already exists as a directory"
-    exit 1
-elif [ -f "$USER_HOME/.claude" ]; then
-    echo "Error: $USER_HOME/.claude already exists as a file"
-    exit 1
-else
-    ln -s /var/claude-config "$USER_HOME/.claude"
-    echo "Created symlink: $USER_HOME/.claude -> /var/claude-config"
-fi
+create_symlink() {
+    local target="$1"
+    local link="$2"
 
-# Set up the settings file symlink
-if [ ! -f "/var/claude-settings.json" ]; then
-    echo "Warning: /var/claude-settings.json does not exist. The mount may not be available yet."
-    echo "The symlink will be created anyway and should work once the container starts."
-fi
+    # If correct symlink exists, skip
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ]; then
+        echo "Symlink $link already correct, skipping"
+        return
+    fi
 
-if [ -L "$USER_HOME/.claude.json" ]; then
-    echo "Symlink $USER_HOME/.claude.json already exists, skipping"
-elif [ -d "$USER_HOME/.claude.json" ]; then
-    echo "Error: $USER_HOME/.claude.json already exists as a directory"
-    exit 1
-elif [ -f "$USER_HOME/.claude.json" ]; then
-    echo "Error: $USER_HOME/.claude.json already exists as a file"
-    exit 1
-else
-    ln -s /var/claude-settings.json "$USER_HOME/.claude.json"
-    echo "Created symlink: $USER_HOME/.claude.json -> /var/claude-settings.json"
-fi
+    # Remove any existing path (file, directory, or wrong symlink)
+    if [ -e "$link" ] || [ -L "$link" ]; then
+        echo "Removing existing $link to create symlink"
+        rm -rf "$link"
+    fi
 
-echo "Claude config mount setup complete"
+    ln -s "$target" "$link"
+    echo "Created symlink: $link -> $target"
+}
+
+create_symlink "/var/claude-config" "$USER_HOME/.claude"
+create_symlink "/var/claude-settings.json" "$USER_HOME/.claude.json"
+
+echo "Claude config symlinks setup complete"
+SCRIPT
+
+chmod +x /usr/local/bin/setup-claude-config-symlinks
+
+echo "Installed /usr/local/bin/setup-claude-config-symlinks"
+echo "This will be run via postCreateCommand to set up symlinks after volumes are mounted."
