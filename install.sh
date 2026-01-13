@@ -1,37 +1,32 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
-# Installation script for claude-dev
+CCIND_HOME="${CCIND_HOME:-$HOME/.ccind}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-
-echo "Installing claude-dev..."
-
-# Create install directory if it doesn't exist
-mkdir -p "$INSTALL_DIR"
-
-# Create a wrapper script that points to the actual location
-cat > "$INSTALL_DIR/claude-dev" << EOF
-#!/bin/bash
-exec "$SCRIPT_DIR/bin/claude-dev" "\$@"
-EOF
-
-chmod +x "$INSTALL_DIR/claude-dev"
-
-echo "Installed claude-dev to $INSTALL_DIR/claude-dev"
-
-# Check if install dir is in PATH
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    echo ""
-    echo "Note: $INSTALL_DIR is not in your PATH"
-    echo "Add it by running:"
-    echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
-    echo ""
-    echo "Or add this line to your shell profile (~/.bashrc, ~/.zshrc, etc.)"
+# If already installed, update via git pull
+if [ -d "$CCIND_HOME" ] && [ -d "$CCIND_HOME/.git" ]; then
+    echo "Updating ccind..."
+    git -C "$CCIND_HOME" pull
+    echo "Update complete."
+    exit 0
 fi
 
+# Fresh install
+echo "Installing ccind to $CCIND_HOME..."
+
+git clone https://github.com/pipmc/claude-code-into-devcontainer.git "$CCIND_HOME"
+
+# Add to shell rc files
+for rc_file in ~/.bashrc ~/.zshrc; do
+    if [ -f "$rc_file" ]; then
+        echo "export CCIND_HOME=\"$CCIND_HOME\"" >> "$rc_file"
+        echo 'export PATH="${PATH}:${CCIND_HOME}/bin"' >> "$rc_file"
+        echo "Added ccind to $rc_file"
+    fi
+done
+
 echo ""
-echo "Usage:"
-echo "  cd /path/to/repo-with-devcontainer"
-echo "  claude-dev"
+echo "Installation complete. Please restart your terminal or run:"
+echo "  source ~/.bashrc  # or ~/.zshrc"
+echo ""
+echo "Then run 'ccind --help' to get started."
