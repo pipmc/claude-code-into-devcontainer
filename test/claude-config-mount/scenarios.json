@@ -4,11 +4,5 @@
         "features": {
             "claude-config-mount": {}
         }
-    },
-    "ubuntu": {
-        "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
-        "features": {
-            "claude-config-mount": {}
-        }
     }
 }
