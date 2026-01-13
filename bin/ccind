@@ -3,13 +3,49 @@ set -euo pipefail
 
 # ccind: Launch Claude Code inside the current repository's devcontainer
 
-# Workspace is the current directory or first argument
-WORKSPACE="${1:-.}"
+show_usage() {
+    echo "Usage: ccind [OPTIONS] [WORKSPACE]"
+    echo ""
+    echo "Launch Claude Code inside the current repository's devcontainer."
+    echo ""
+    echo "Arguments:"
+    echo "  WORKSPACE    Path to the workspace directory (default: current directory)"
+    echo ""
+    echo "Options:"
+    echo "  --rebuild    Force rebuild of the devcontainer"
+    echo "  --help, -h   Show this help message"
+}
+
+# Parse arguments
+REBUILD=false
+WORKSPACE=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --rebuild)
+            REBUILD=true
+            shift
+            ;;
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+        *)
+            WORKSPACE="$1"
+            shift
+            ;;
+    esac
+done
+WORKSPACE="${WORKSPACE:-.}"
 WORKSPACE="$(cd "$WORKSPACE" && pwd)"
 
 # Config mount feature - defaults to published GHCR version
 # Override with CCIND_CONFIG_MOUNT_FEATURE for development/testing
-CONFIG_MOUNT_FEATURE="${CCIND_CONFIG_MOUNT_FEATURE:-ghcr.io/pipmc/devcontainer-features/claude-config-mount:1}"
+CONFIG_MOUNT_FEATURE="${CCIND_CONFIG_MOUNT_FEATURE:-ghcr.io/pipmc/claude-code-into-devcontainer/claude-config-mount:0.3.0}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -64,10 +100,18 @@ echo_info "Workspace: $WORKSPACE"
 ADDITIONAL_FEATURES='{"ghcr.io/anthropics/devcontainer-features/claude-code:1": {}, "'"$CONFIG_MOUNT_FEATURE"'": {}}'
 
 # Bring up the devcontainer with additional features
-echo_info "Starting devcontainer..."
-devcontainer up \
-    --workspace-folder "$WORKSPACE" \
-    --additional-features "$ADDITIONAL_FEATURES"
+if [ "$REBUILD" = true ]; then
+    echo_info "Starting devcontainer (forcing rebuild)..."
+    devcontainer up \
+        --workspace-folder "$WORKSPACE" \
+        --remove-existing-container \
+        --additional-features "$ADDITIONAL_FEATURES"
+else
+    echo_info "Starting devcontainer..."
+    devcontainer up \
+        --workspace-folder "$WORKSPACE" \
+        --additional-features "$ADDITIONAL_FEATURES"
+fi
 
 # Check if claude is available in the container
 if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude' &> /dev/null; then
