@@ -143,4 +143,4 @@ fi
 echo_info "Launching Claude Code..."
 exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
-    bash -c 'export PATH="$HOME/.local/bin:$PATH"; exec claude'
+    bash -c 'PATH="$HOME/.local/bin:$PATH" claude'
