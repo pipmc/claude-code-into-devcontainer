@@ -65,13 +65,83 @@ echo_error() {
     echo -e "${RED}[ccind]${NC} $1"
 }
 
-prompt_rebuild() {
-    echo_warn "Claude Code CLI not found in container."
-    echo_warn "The container may have been built before the claude-code feature was added."
-    echo ""
-    read -p "Rebuild the container with Claude Code? [y/N] " -n 1 -r
-    echo ""
-    [[ $REPLY =~ ^[Yy]$ ]]
+install_claude_manually() {
+    echo_info "Installing Claude Code manually in container..."
+
+    # Install Claude Code using the official install script
+    if devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'curl -fsSL https://claude.ai/install.sh | bash' 2>&1; then
+        echo_info "Claude Code installed successfully."
+    else
+        echo_error "Failed to install Claude Code manually."
+        return 1
+    fi
+}
+
+sync_claude_config() {
+    # Check if config mount feature worked (mounts would exist at /var/claude-*)
+    if devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'test -e /var/claude-settings.json' &> /dev/null; then
+        return 0  # Feature-based mount is working
+    fi
+
+    echo_info "Syncing Claude config from host to container..."
+
+    # Get the container's home directory and container ID
+    CONTAINER_HOME=$(devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'echo $HOME' 2>/dev/null)
+    CONTAINER_ID=$(get_container_id)
+
+    # Copy ~/.claude.json if it exists on host
+    if [ -f "$HOME/.claude.json" ]; then
+        docker cp "$HOME/.claude.json" "$CONTAINER_ID:$CONTAINER_HOME/.claude.json" 2>/dev/null && \
+            echo_info "Copied .claude.json" || \
+            echo_warn "Could not copy .claude.json"
+    fi
+
+    # Ensure .claude directory exists
+    devcontainer exec --workspace-folder "$WORKSPACE" bash -c "mkdir -p \$HOME/.claude/plugins" 2>/dev/null
+
+    # Copy ~/.claude/settings.json if it exists (resolve symlinks)
+    if [ -e "$HOME/.claude/settings.json" ]; then
+        SETTINGS_SOURCE=$(readlink -f "$HOME/.claude/settings.json" 2>/dev/null || echo "$HOME/.claude/settings.json")
+        docker cp "$SETTINGS_SOURCE" "$CONTAINER_ID:$CONTAINER_HOME/.claude/settings.json" 2>/dev/null && \
+            echo_info "Copied settings.json" || \
+            echo_warn "Could not copy settings.json"
+    fi
+
+    # Copy plugins directory (installed plugins, marketplaces, etc.)
+    if [ -d "$HOME/.claude/plugins" ]; then
+        # Copy installed_plugins.json and fix paths
+        if [ -f "$HOME/.claude/plugins/installed_plugins.json" ]; then
+            sed "s|$HOME|$CONTAINER_HOME|g" "$HOME/.claude/plugins/installed_plugins.json" > /tmp/installed_plugins_fixed.json
+            docker cp /tmp/installed_plugins_fixed.json "$CONTAINER_ID:$CONTAINER_HOME/.claude/plugins/installed_plugins.json" 2>/dev/null
+            rm -f /tmp/installed_plugins_fixed.json
+        fi
+        # Copy known_marketplaces.json (resolve symlinks) and fix paths
+        if [ -e "$HOME/.claude/plugins/known_marketplaces.json" ]; then
+            MARKETPLACES_SOURCE=$(readlink -f "$HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null || echo "$HOME/.claude/plugins/known_marketplaces.json")
+            # Copy and fix paths from host to container
+            sed "s|$HOME/.claude|$CONTAINER_HOME/.claude|g" "$MARKETPLACES_SOURCE" > /tmp/known_marketplaces_fixed.json
+            docker cp /tmp/known_marketplaces_fixed.json "$CONTAINER_ID:$CONTAINER_HOME/.claude/plugins/known_marketplaces.json" 2>/dev/null
+            rm -f /tmp/known_marketplaces_fixed.json
+        fi
+        # Copy marketplaces directory
+        if [ -d "$HOME/.claude/plugins/marketplaces" ]; then
+            docker cp "$HOME/.claude/plugins/marketplaces" "$CONTAINER_ID:$CONTAINER_HOME/.claude/plugins/" 2>/dev/null
+        fi
+        # Copy cache directory
+        if [ -d "$HOME/.claude/plugins/cache" ]; then
+            docker cp "$HOME/.claude/plugins/cache" "$CONTAINER_ID:$CONTAINER_HOME/.claude/plugins/" 2>/dev/null
+        fi
+        echo_info "Copied plugins directory"
+    fi
+
+    # Fix permissions - docker cp copies as root, need to chown to container user
+    CONTAINER_USER=$(docker exec "$CONTAINER_ID" whoami 2>/dev/null || echo "metr")
+    docker exec -u root "$CONTAINER_ID" chown -R "$CONTAINER_USER:$CONTAINER_USER" "$CONTAINER_HOME/.claude" 2>/dev/null || true
+    docker exec -u root "$CONTAINER_ID" chown "$CONTAINER_USER:$CONTAINER_USER" "$CONTAINER_HOME/.claude.json" 2>/dev/null || true
+}
+
+get_container_id() {
+    docker ps --filter "label=devcontainer.local_folder=$WORKSPACE" --format "{{.ID}}" | head -1
 }
 
 # Check for devcontainer CLI
@@ -99,42 +169,87 @@ echo_info "Workspace: $WORKSPACE"
 # Build additional features JSON
 ADDITIONAL_FEATURES='{"ghcr.io/anthropics/devcontainer-features/claude-code:1": {}, "'"$CONFIG_MOUNT_FEATURE"'": {}}'
 
-# Bring up the devcontainer with additional features
-if [ "$REBUILD" = true ]; then
-    echo_info "Starting devcontainer (forcing rebuild)..."
-    devcontainer up \
-        --workspace-folder "$WORKSPACE" \
-        --remove-existing-container \
-        --additional-features "$ADDITIONAL_FEATURES"
-else
-    echo_info "Starting devcontainer..."
-    devcontainer up \
-        --workspace-folder "$WORKSPACE" \
-        --additional-features "$ADDITIONAL_FEATURES"
-fi
+# Strategy: Try devcontainer up first. If it fails (common with SSH issues during rebuilds),
+# check if there's an existing image we can use directly.
 
-# Check if claude is available in the container
-if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude' &> /dev/null; then
-    if prompt_rebuild; then
-        echo_info "Rebuilding container..."
-        devcontainer up \
-            --workspace-folder "$WORKSPACE" \
-            --remove-existing-container \
-            --additional-features "$ADDITIONAL_FEATURES"
+start_devcontainer() {
+    if [ "$REBUILD" = true ]; then
+        echo_info "Starting devcontainer (forcing rebuild)..."
+        devcontainer up --workspace-folder "$WORKSPACE" --remove-existing-container --additional-features "$ADDITIONAL_FEATURES" 2>&1
     else
-        echo_error "Cannot proceed without Claude Code CLI."
+        echo_info "Starting devcontainer..."
+        devcontainer up --workspace-folder "$WORKSPACE" --additional-features "$ADDITIONAL_FEATURES" 2>&1
+    fi
+}
+
+# Try to find an existing image for this workspace
+find_existing_image() {
+    # devcontainer CLI names images based on workspace path hash
+    docker images --format "{{.Repository}}" | grep -E "^vsc-$(basename "$WORKSPACE")-" | head -1
+}
+
+start_from_existing_image() {
+    local image_name="$1"
+    local container_name="$(basename "$WORKSPACE")-dev"
+
+    echo_info "Starting container from existing image: $image_name"
+
+    # Stop and remove existing container if any
+    docker rm -f "$container_name" 2>/dev/null || true
+
+    # Start container with workspace mounted
+    docker run -d \
+        --name "$container_name" \
+        --hostname "$(basename "$WORKSPACE")" \
+        -v "$WORKSPACE:/home/metr/app" \
+        -v "$HOME/.aws:/home/metr/.aws:ro" \
+        -l "devcontainer.local_folder=$WORKSPACE" \
+        "$image_name" \
+        sleep infinity
+
+    return $?
+}
+
+# Try devcontainer up first
+if ! start_devcontainer; then
+    echo_warn "devcontainer up failed. Checking for existing image..."
+
+    EXISTING_IMAGE=$(find_existing_image)
+    if [ -n "$EXISTING_IMAGE" ]; then
+        if start_from_existing_image "$EXISTING_IMAGE"; then
+            echo_info "Started from existing image."
+        else
+            echo_error "Failed to start from existing image."
+            exit 1
+        fi
+    else
+        echo_error "No existing image found. Please fix the devcontainer build errors above."
         exit 1
     fi
 fi
 
-# Verify claude is available before launching
-if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude' &> /dev/null; then
-    echo_error "Claude Code CLI still not found after rebuild. Please check for errors above."
+# Check if claude is available in the container, install if needed
+# Note: Check both PATH and ~/.local/bin since Claude installs there
+if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude || test -x "$HOME/.local/bin/claude"' &> /dev/null; then
+    echo_info "Claude Code not found in container. Installing..."
+    if ! install_claude_manually; then
+        echo_error "Could not install Claude Code. Please check for errors above."
+        exit 1
+    fi
+fi
+
+# Final verification
+if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude || test -x "$HOME/.local/bin/claude"' &> /dev/null; then
+    echo_error "Claude Code CLI still not found. Please check for errors above."
     exit 1
 fi
 
+# Sync Claude config from host if feature-based mount didn't work
+sync_claude_config
+
 # Launch Claude Code interactively
+# Use PATH that includes ~/.local/bin since Claude installs there
 echo_info "Launching Claude Code..."
 exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
-    claude
+    bash -c 'PATH="$HOME/.local/bin:$PATH" claude'
