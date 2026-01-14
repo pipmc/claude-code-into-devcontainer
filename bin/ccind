@@ -45,7 +45,7 @@ WORKSPACE="$(cd "$WORKSPACE" && pwd)"
 
 # Config mount feature - defaults to published GHCR version
 # Override with CCIND_CONFIG_MOUNT_FEATURE for development/testing
-CONFIG_MOUNT_FEATURE="${CCIND_CONFIG_MOUNT_FEATURE:-ghcr.io/pipmc/claude-code-into-devcontainer/claude-config-mount:0.1.6}"
+CONFIG_MOUNT_FEATURE="${CCIND_CONFIG_MOUNT_FEATURE:-ghcr.io/pipmc/claude-code-into-devcontainer/claude-config-mount:0.1.5}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -175,10 +175,10 @@ ADDITIONAL_FEATURES='{"ghcr.io/anthropics/devcontainer-features/claude-code:1": 
 start_devcontainer() {
     if [ "$REBUILD" = true ]; then
         echo_info "Starting devcontainer (forcing rebuild)..."
-        devcontainer up --workspace-folder "$WORKSPACE" --remove-existing-container 2>&1
+        devcontainer up --workspace-folder "$WORKSPACE" --remove-existing-container --additional-features "$ADDITIONAL_FEATURES" 2>&1
     else
         echo_info "Starting devcontainer..."
-        devcontainer up --workspace-folder "$WORKSPACE" 2>&1
+        devcontainer up --workspace-folder "$WORKSPACE" --additional-features "$ADDITIONAL_FEATURES" 2>&1
     fi
 }
 
