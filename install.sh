@@ -25,8 +25,14 @@ for rc_file in ~/.bashrc ~/.zshrc; do
     fi
 done
 
+# Add to fish shell (fish_user_paths is universal, doesn't require config.fish)
+if command -v fish &> /dev/null; then
+    fish -c "set -Ua fish_user_paths '$CCIND_HOME/bin'" 2>/dev/null || true
+    echo "Added ccind to fish PATH (via fish_user_paths)"
+fi
+
 echo ""
 echo "Installation complete. Please restart your terminal or run:"
-echo "  source ~/.bashrc  # or ~/.zshrc"
+echo "  source ~/.bashrc  # or ~/.zshrc (fish users: path is set automatically)"
 echo ""
 echo "Then run 'ccind --help' to get started."

@@ -113,8 +113,13 @@ else
         --additional-features "$ADDITIONAL_FEATURES"
 fi
 
+# Helper to check if claude is available (checks both PATH and ~/.local/bin)
+claude_available() {
+    devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude || test -x "$HOME/.local/bin/claude"' &> /dev/null
+}
+
 # Check if claude is available in the container
-if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude' &> /dev/null; then
+if ! claude_available; then
     if prompt_rebuild; then
         echo_info "Rebuilding container..."
         devcontainer up \
@@ -128,13 +133,14 @@ if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claud
 fi
 
 # Verify claude is available before launching
-if ! devcontainer exec --workspace-folder "$WORKSPACE" bash -c 'command -v claude' &> /dev/null; then
+if ! claude_available; then
     echo_error "Claude Code CLI still not found after rebuild. Please check for errors above."
     exit 1
 fi
 
 # Launch Claude Code interactively
+# Use PATH that includes ~/.local/bin since Claude installs there
 echo_info "Launching Claude Code..."
 exec devcontainer exec \
     --workspace-folder "$WORKSPACE" \
-    claude
+    bash -c 'export PATH="$HOME/.local/bin:$PATH"; exec claude'
